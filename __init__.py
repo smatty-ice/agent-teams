@@ -8,7 +8,11 @@ The Phase-3 gateway watcher (auto-idle + push) is re-homed onto plugin-safe
 surfaces (see watcher.py): a throttled ``pre_gateway_dispatch`` hook for active
 use plus an opt-in ``hermes team-watch`` daemon for true timer delivery.
 """
+import logging
+
 from . import team_tools as tt
+
+logger = logging.getLogger(__name__)
 
 
 def _team_watch_setup(parser) -> None:
@@ -18,10 +22,44 @@ def _team_watch_setup(parser) -> None:
     return None
 
 
+def _warn_on_existing_team_tool(name: str) -> None:
+    """AT-02: make a same-toolset registration collision visible.
+
+    The core ``tools/team_tools.py`` (the built-in copy dispatcher-spawned
+    workers load) registers the same 17 names under the same ``"team"`` toolset
+    at import. ``tools.registry.register`` only rejects a *cross-toolset* shadow;
+    a same-toolset re-registration is a **silent last-write-wins overwrite**
+    (no error, no log). So before we register, check the registry and log a
+    WARNING when ``name`` is already present under ``"team"`` — this plugin's
+    registration will overwrite the built-in handler, and that swap should be
+    auditable in agent.log rather than invisible. Best-effort: any failure to
+    introspect the registry is swallowed so plugin load never breaks on it.
+
+    The deeper fix (make the registry itself log same-toolset overwrites)
+    belongs to the hermes-agent repo that owns ``tools/registry.py`` — see
+    ``docs/RESTRUCTURE-single-source.md``.
+    """
+    try:
+        from tools.registry import registry
+        existing = registry.get_entry(name)
+    except Exception:
+        return
+    if existing is not None and getattr(existing, "toolset", None) == "team":
+        logger.warning(
+            "agent-teams: tool %r is already registered under toolset 'team' "
+            "(likely the built-in tools/team_tools.py); the plugin "
+            "registration will overwrite it (same-toolset last-write-wins). "
+            "This dual registration is AT-02 — see "
+            "docs/RESTRUCTURE-single-source.md.",
+            name,
+        )
+
+
 def register(ctx) -> None:
     """Plugin entrypoint. Registers the 17 team_* tools, the gateway watcher
     hook, and the ``team-watch`` CLI daemon command."""
     for name, schema in tt.SCHEMAS.items():
+        _warn_on_existing_team_tool(name)
         ctx.register_tool(
             name=name,
             toolset="team",

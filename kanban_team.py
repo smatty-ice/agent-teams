@@ -89,6 +89,29 @@ _VALID_PROTOCOL_TYPES = frozenset({
     "plan_approval_request", "plan_approval_response",
 })
 
+_IDENTITY_BOUND_PROTOCOL_TYPES = frozenset({
+    "shutdown_response", "plan_approval_response",
+})
+"""Protocol message types whose ``from_sender`` is load-bearing for a trust
+decision the *recipient* makes automatically (AT-03): a ``shutdown_response``
+satisfies :func:`kanban_team_runtime._member_acked_shutdown` and short-circuits
+a member's hard-shutdown grace window; a ``plan_approval_response`` satisfies
+:func:`_has_plan_approval_response` and lifts the Item-5 read-only gate. Because
+the comment author is whatever the caller passes, a worker could otherwise post
+one of these *attributed to another member*. When the caller is a
+dispatcher-spawned worker (its identity is provable from the trusted
+``HERMES_KANBAN_TASK`` env the dispatcher set), :func:`team_send` requires
+``from_sender`` to equal that worker's own member name for these types.
+The cooperative *request* types (``shutdown_request`` / ``plan_approval_request``)
+are not bound — those are lead→member directives, not self-asserted acks."""
+
+WORKER_TASK_ENV = "HERMES_KANBAN_TASK"
+"""Env var the dispatcher sets to the worker's own member-task id on every
+spawned worker (see ``hermes_cli.kanban_db`` worker spawn). It is set by the
+trusted dispatcher, never by the model, so it is the authority anchor for
+"which member is this calling worker" — the same anchor ``tools/kanban_tools``
+and ``tools/send_message_tool`` already use to gate worker-scoped actions."""
+
 
 class PlanApprovalRequired(Exception):
     """Raised when a mutating team op targets a member still gated on plan
@@ -386,6 +409,13 @@ def team_create(
         "cursors": {},
         "ops": {},
     }
+    # teams-viewer linkage: when a dispatched agent creates a team, record the
+    # spawning dispatch task so the viewer can nest the team under it. Env-gated
+    # via HERMES_KANBAN_TASK (the dispatcher sets it on every worker — see
+    # kanban_db worker spawn); no behavior change when unset.
+    parent_dispatch_task = os.environ.get("HERMES_KANBAN_TASK")
+    if parent_dispatch_task:
+        state["parent_dispatch_task"] = parent_dispatch_task
     _write_state(conn, root_id, state)
     return _record_from_state(root_id, state)
 
@@ -766,6 +796,73 @@ def team_task_create(
 # Mailbox — team_send, team_inbox, team_inbox_ack
 # ---------------------------------------------------------------------------
 
+def _resolve_worker_member(
+    conn: sqlite3.Connection, team_id: str, *, env: Optional[dict] = None,
+) -> Optional[str]:
+    """Return the roster member name of the dispatcher-spawned worker making
+    this call, or ``None`` when the caller is not a worker for this team.
+
+    The trust anchor is :data:`WORKER_TASK_ENV` (``HERMES_KANBAN_TASK``), which
+    the dispatcher — not the model — sets to the worker's own member-task id on
+    every spawned worker. We map that task id back to its roster member by
+    matching ``member.task_id``. This is the team-layer analog of the
+    worker-scope gate ``tools/kanban_tools`` already keys on the same env var.
+
+    Returns ``None`` (caller is the lead/session, or a worker whose task is not
+    a member of this team) so callers can treat "no provable worker identity"
+    as "do not constrain" — the gate this powers (AT-03) only tightens, never
+    loosens, behavior. ``env`` is injectable for tests; defaults to
+    ``os.environ``.
+    """
+
+    environ = os.environ if env is None else env
+    worker_task = (environ.get(WORKER_TASK_ENV) or "").strip()
+    if not worker_task:
+        return None
+    try:
+        team = get_team(conn, team_id)
+    except (KeyError, ValueError):
+        return None
+    for name, member in team.members.items():
+        if member.task_id and str(member.task_id) == worker_task:
+            return name
+    return None
+
+
+def _assert_sender_identity(
+    conn: sqlite3.Connection,
+    team_id: str,
+    *,
+    from_sender: str,
+    protocol_type: Optional[str],
+    env: Optional[dict] = None,
+) -> None:
+    """Reject a spoofed sender on an identity-bound protocol ack (AT-03).
+
+    When ``protocol_type`` is in :data:`_IDENTITY_BOUND_PROTOCOL_TYPES` and the
+    caller is a provable dispatcher-spawned worker (see
+    :func:`_resolve_worker_member`), require ``from_sender`` to equal that
+    worker's own member name; otherwise raise :class:`ValueError`. A no-op for
+    non-bound types, and a no-op when no worker identity is provable (the
+    lead/session legitimately sends as ``lead`` with no
+    :data:`WORKER_TASK_ENV` set) — so the lead path and ordinary chat messages
+    are never constrained.
+    """
+
+    if protocol_type not in _IDENTITY_BOUND_PROTOCOL_TYPES:
+        return
+    caller = _resolve_worker_member(conn, team_id, env=env)
+    if caller is None:
+        return
+    if from_sender != caller:
+        raise ValueError(
+            f"sender {from_sender!r} does not match the calling worker's "
+            f"identity {caller!r}; a {protocol_type!r} must be sent as the "
+            f"member that owns this worker task (cannot be attributed to "
+            f"another member)"
+        )
+
+
 def _format_message_body(
     *, to: str, protocol_type: Optional[str], message: str,
 ) -> str:
@@ -800,6 +897,15 @@ def team_send(
     :data:`_VALID_PROTOCOL_TYPES`; arbitrary strings are rejected so a typo
     can't silently bypass the recipient's protocol handlers.
 
+    AT-03: for the identity-bound protocol acks
+    (:data:`_IDENTITY_BOUND_PROTOCOL_TYPES`), a dispatcher-spawned worker may
+    only send as its own roster member — ``from_sender`` is checked against the
+    member that owns the worker's task (proven via the trusted
+    :data:`WORKER_TASK_ENV`), so a worker cannot forge another member's
+    ``shutdown_response`` / ``plan_approval_response``. Raises
+    :class:`ValueError` on a mismatch. The lead/session path (no
+    :data:`WORKER_TASK_ENV`) is unaffected.
+
     No ``add_notify_sub`` (MASTER-PLAN §2.4, BUG-5): ``platform="hermes-team"``
     rows are never consumed today, so the read model is polling-based until
     Phase 3 wires real push delivery.
@@ -815,6 +921,14 @@ def team_send(
             f"protocol_type must be one of {sorted(_VALID_PROTOCOL_TYPES)} "
             f"or None, got {protocol_type!r}"
         )
+
+    # AT-03: an identity-bound protocol ack (shutdown_response /
+    # plan_approval_response) cannot be attributed to another member. When the
+    # caller is a provable dispatcher-spawned worker, from_sender must be that
+    # worker's own member name. No-op for the lead/session path.
+    _assert_sender_identity(
+        conn, team_id, from_sender=from_sender, protocol_type=protocol_type,
+    )
 
     body = _format_message_body(
         to=to, protocol_type=protocol_type, message=message,

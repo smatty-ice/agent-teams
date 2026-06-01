@@ -700,3 +700,149 @@ def test_team_spawn_unknown_agent_type_errors(conn, tmp_path):
             conn, rec.id, "alice", "researcher", "p-alice", "investigate X",
             agent_type="nonexistent-agent",
         )
+
+
+# ---------------------------------------------------------------------------
+# AT-03 — sender identity binding on protocol acks
+#
+# A dispatcher-spawned worker proves its identity via the trusted
+# HERMES_KANBAN_TASK env (its own member-task id). For the identity-bound
+# protocol acks (shutdown_response / plan_approval_response) it may only send
+# as its own roster member — it cannot forge another member's ack. The lead
+# (no HERMES_KANBAN_TASK) is unconstrained. These invert the audit probe that
+# showed a forged shutdown_response was accepted before the fix.
+# ---------------------------------------------------------------------------
+
+def _two_member_team(conn):
+    """attacker + victim, each a spawned member; returns (team_id, attacker,
+    victim)."""
+    rec = kt.team_create(conn, name="sec", goal="g")
+    attacker = kt.team_spawn(conn, rec.id, "attacker", "teammate", "p-att", "work")
+    victim = kt.team_spawn(conn, rec.id, "victim", "teammate", "p-vic", "work")
+    return rec.id, attacker, victim
+
+
+def test_worker_cannot_forge_other_members_shutdown_response(conn):
+    """The exact audit probe, inverted: a worker running as `attacker` (its
+    HERMES_KANBAN_TASK is attacker's task) sends a shutdown_response attributed
+    to `victim` — it must now be REJECTED."""
+    team_id, attacker, victim = _two_member_team(conn)
+    # env is injected (not the real process env) so the test is hermetic.
+    attacker_env = {kt.WORKER_TASK_ENV: attacker.task_id}
+    with pytest.raises(ValueError, match="does not match the calling worker"):
+        kt._assert_sender_identity(
+            conn, team_id,
+            from_sender="victim", protocol_type="shutdown_response",
+            env=attacker_env,
+        )
+
+
+def test_worker_can_send_its_own_shutdown_response(conn):
+    """The legitimate path: the attacker worker sending its OWN
+    shutdown_response is allowed (and reaches the wire)."""
+    team_id, attacker, victim = _two_member_team(conn)
+    attacker_env = {kt.WORKER_TASK_ENV: attacker.task_id}
+    # No raise.
+    kt._assert_sender_identity(
+        conn, team_id,
+        from_sender="attacker", protocol_type="shutdown_response",
+        env=attacker_env,
+    )
+
+
+def test_team_send_rejects_forged_protocol_ack_end_to_end(conn, monkeypatch):
+    """Full team_send path: with HERMES_KANBAN_TASK set to attacker's task, a
+    forged shutdown_response as `victim` raises and writes NO comment."""
+    team_id, attacker, victim = _two_member_team(conn)
+    monkeypatch.setenv(kt.WORKER_TASK_ENV, attacker.task_id)
+    before = len(kb.list_comments(conn, team_id))
+    with pytest.raises(ValueError, match="does not match the calling worker"):
+        kt.team_send(
+            conn, team_id, to="lead", from_sender="victim",
+            message="ok", protocol_type="shutdown_response",
+        )
+    # No addressed comment was written for the rejected forgery.
+    after = [c for c in kb.list_comments(conn, team_id)
+             if c.body.startswith("@lead:")]
+    assert after == []
+    assert len(kb.list_comments(conn, team_id)) == before
+
+
+def test_team_send_allows_legit_protocol_ack_end_to_end(conn, monkeypatch):
+    """Full team_send path: the attacker worker sending its own
+    shutdown_response succeeds and the recipient's ack-check would accept it."""
+    team_id, attacker, victim = _two_member_team(conn)
+    monkeypatch.setenv(kt.WORKER_TASK_ENV, attacker.task_id)
+    mid = kt.team_send(
+        conn, team_id, to="lead", from_sender="attacker",
+        message="ok", protocol_type="shutdown_response",
+    )
+    assert mid
+    addressed = [c for c in kb.list_comments(conn, team_id)
+                 if c.body.startswith("@lead:")]
+    assert len(addressed) == 1
+    assert addressed[0].author == "attacker"
+
+
+def test_lead_path_unconstrained_by_sender_binding(conn, monkeypatch):
+    """The lead/session (no HERMES_KANBAN_TASK) can still send a
+    shutdown_response as `lead` — the binding only constrains provable
+    workers, never the lead."""
+    team_id, attacker, victim = _two_member_team(conn)
+    monkeypatch.delenv(kt.WORKER_TASK_ENV, raising=False)
+    mid = kt.team_send(
+        conn, team_id, to="attacker", from_sender="lead",
+        message="please stop", protocol_type="shutdown_request",
+    )
+    assert mid  # shutdown_request is not identity-bound anyway
+    # And a lead-authored shutdown_response (e.g. relaying) is allowed too.
+    mid2 = kt.team_send(
+        conn, team_id, to="victim", from_sender="lead",
+        message="ack", protocol_type="shutdown_response",
+    )
+    assert mid2
+
+
+def test_non_protocol_message_never_constrained(conn, monkeypatch):
+    """A plain (non-protocol) message is never identity-checked, even from a
+    worker — workers routinely message teammates under any display sender."""
+    team_id, attacker, victim = _two_member_team(conn)
+    monkeypatch.setenv(kt.WORKER_TASK_ENV, attacker.task_id)
+    # attacker worker sends a normal note 'as' victim — allowed (no protocol
+    # trust decision rides on a plain message's sender).
+    mid = kt.team_send(
+        conn, team_id, to="lead", from_sender="victim",
+        message="just a status note",
+    )
+    assert mid
+
+
+def test_shutdown_request_not_identity_bound(conn, monkeypatch):
+    """Only the *response* acks are bound; a worker may relay a
+    shutdown_REQUEST under another name without rejection (it is a directive,
+    not a self-asserted ack)."""
+    team_id, attacker, victim = _two_member_team(conn)
+    monkeypatch.setenv(kt.WORKER_TASK_ENV, attacker.task_id)
+    mid = kt.team_send(
+        conn, team_id, to="victim", from_sender="lead",
+        message="stop", protocol_type="shutdown_request",
+    )
+    assert mid
+
+
+# ---------------------------------------------------------------------------
+# AT-04 — teams-viewer parent-dispatch stamp (env-gated)
+# ---------------------------------------------------------------------------
+
+def test_team_create_stamps_parent_dispatch_task_when_env_set(conn, monkeypatch):
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_dispatch_parent")
+    rec = kt.team_create(conn, name="viewer", goal="g")
+    state = kt._read_state(conn, rec.id)
+    assert state.get("parent_dispatch_task") == "t_dispatch_parent"
+
+
+def test_team_create_no_stamp_when_env_unset(conn, monkeypatch):
+    monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
+    rec = kt.team_create(conn, name="noviewer", goal="g")
+    state = kt._read_state(conn, rec.id)
+    assert "parent_dispatch_task" not in state

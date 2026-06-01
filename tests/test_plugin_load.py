@@ -136,3 +136,72 @@ def test_tool_handler_dispatches_to_correct_handler(monkeypatch):
         # not the last name in the loop (closure late-binding guard).
         result = t["handler"]({"probe": t["name"]})
         assert result == t["name"], (result, t["name"])
+
+
+# ---------------------------------------------------------------------------
+# AT-02 — same-toolset re-registration collision is LOGGED (not silent)
+# ---------------------------------------------------------------------------
+
+def test_existing_team_tool_logs_collision_warning(monkeypatch, caplog):
+    """When a team_* name is already registered under the 'team' toolset (the
+    built-in tools/team_tools.py), the plugin warns that it will overwrite —
+    so the otherwise-silent last-write-wins is auditable."""
+    import logging
+    import types
+    import sys
+    import plugins.agent_teams as pkg
+
+    # Fake `tools.registry` with a registry whose get_entry reports a
+    # pre-existing 'team'-toolset entry for the queried name.
+    fake_entry = type("E", (), {"toolset": "team"})()
+    fake_registry = types.SimpleNamespace(get_entry=lambda name: fake_entry)
+    fake_mod = types.ModuleType("tools.registry")
+    fake_mod.registry = fake_registry
+    tools_pkg = types.ModuleType("tools")
+    monkeypatch.setitem(sys.modules, "tools", tools_pkg)
+    monkeypatch.setitem(sys.modules, "tools.registry", fake_mod)
+
+    with caplog.at_level(logging.WARNING, logger=pkg.__name__):
+        pkg._warn_on_existing_team_tool("team_send")
+
+    assert any(
+        "already registered under toolset 'team'" in r.message
+        and "team_send" in r.message
+        for r in caplog.records
+    ), [r.message for r in caplog.records]
+
+
+def test_no_collision_warning_when_name_absent(monkeypatch, caplog):
+    """No warning when the name isn't already registered (the normal case)."""
+    import logging
+    import types
+    import sys
+    import plugins.agent_teams as pkg
+
+    fake_registry = types.SimpleNamespace(get_entry=lambda name: None)
+    fake_mod = types.ModuleType("tools.registry")
+    fake_mod.registry = fake_registry
+    monkeypatch.setitem(sys.modules, "tools", types.ModuleType("tools"))
+    monkeypatch.setitem(sys.modules, "tools.registry", fake_mod)
+
+    with caplog.at_level(logging.WARNING, logger=pkg.__name__):
+        pkg._warn_on_existing_team_tool("team_send")
+
+    assert not any(
+        "already registered" in r.message for r in caplog.records
+    ), [r.message for r in caplog.records]
+
+
+def test_collision_check_swallows_registry_import_failure(monkeypatch):
+    """If the registry can't be introspected, the check is a silent no-op so
+    plugin load never breaks on it."""
+    import types
+    import sys
+    import plugins.agent_teams as pkg
+
+    # Make `from tools.registry import registry` raise.
+    broken = types.ModuleType("tools.registry")
+    monkeypatch.setitem(sys.modules, "tools", types.ModuleType("tools"))
+    monkeypatch.setitem(sys.modules, "tools.registry", broken)  # no `registry` attr
+    # Should not raise.
+    pkg._warn_on_existing_team_tool("team_send")
