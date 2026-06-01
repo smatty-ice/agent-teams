@@ -1,0 +1,26 @@
+name: agent-teams
+version: 1.0.0
+description: "Claude-parity agent teams for Hermes — team_create/spawn/task/send/inbox/status/shutdown/delete plus debug bundle, recovery verbs, hooks registry, and hard-shutdown. Gated on HERMES_TEAM_LEAD=1 or `team` in profile toolsets. Stores state on Kanban (no external deps)."
+author: wsmathers
+kind: standalone
+platforms: [macos, linux, windows]
+provides_tools:
+  - team_create
+  - team_spawn
+  - team_task_create
+  - team_send
+  - team_inbox
+  - team_inbox_ack
+  - team_status
+  - team_shutdown
+  - team_delete
+  - team_debug_bundle
+  - team_export_config
+  - team_inspect
+  - team_replay
+  - team_requeue
+  - team_mark_blocked
+  - team_restore_assignment
+  - team_explain_blockage
+provides_hooks:
+  - pre_gateway_dispatch
