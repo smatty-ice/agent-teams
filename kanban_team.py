@@ -278,27 +278,34 @@ def _require_slug(value: Optional[str], field_name: str) -> str:
 def _write_state(
     conn: sqlite3.Connection, root_id: str, state: dict[str, Any],
 ) -> int:
-    """Append a new state snapshot as a ``[team:state] {...}`` comment.
+    """Persist the team's full state as the single ``team_state`` row.
 
-    Returns the new comment id. State must be JSON-serialisable.
+    Opens its own ``write_txn``; callers that already hold one (``_update_state``)
+    call ``kts.state_write`` directly instead. Returns 0 — the old comment-id
+    return is no longer meaningful and no caller uses it. State must be
+    JSON-serialisable.
     """
 
-    payload = json.dumps(state, ensure_ascii=False, sort_keys=True)
-    return kb.add_comment(
-        conn, root_id, author="team-lead", body=STATE_PREFIX + payload,
-    )
+    with kb.write_txn(conn):
+        kts.state_write(conn, root_id, state)
+    return 0
 
 
 def _read_state(conn: sqlite3.Connection, root_id: str) -> dict[str, Any]:
-    """Return the latest state snapshot, or ``{}`` if none exists.
+    """Return the team's state, or ``{}`` if none exists.
 
-    Iterates ``list_comments`` in reverse (most recent first) and returns
-    the first decodable ``[team:state]`` payload. Older snapshots are
-    ignored — last-write-wins, identical to ``kanban_swarm.latest_blackboard``.
+    Reads the authoritative ``team_state`` row. For back-compat with teams
+    created before the table existed, falls back to the newest decodable
+    ``[team:state]`` comment ordered by comment **id** (not created_at, so the
+    fallback is deterministic too); the next ``_update_state`` migrates it into
+    the table. Plain reads — safe inside or outside a transaction.
     """
 
+    row = kts.state_read(conn, root_id)
+    if row is not None:
+        return row
     comments = kb.list_comments(conn, root_id)
-    for comment in reversed(comments):
+    for comment in sorted(comments, key=lambda c: c.id, reverse=True):
         body = comment.body or ""
         if not body.startswith(STATE_PREFIX):
             continue
@@ -332,11 +339,16 @@ def _update_state(
     Returns the merged dict. Top-level keys in ``patch`` replace top-level
     keys in the snapshot. Callers updating nested structures (e.g.
     ``roster``) pass the fully-rebuilt dict for that key.
+
+    The read-merge-write runs inside a single ``kb.write_txn`` (BEGIN
+    IMMEDIATE), so concurrent updaters serialize and cannot silently drop each
+    other's changes — the lost-update race the comment-snapshot model had.
     """
 
-    state = _read_state(conn, root_id)
-    state.update(patch)
-    _write_state(conn, root_id, state)
+    with kb.write_txn(conn):
+        state = _read_state(conn, root_id)
+        state.update(patch)
+        kts.state_write(conn, root_id, state)
     return state
 
 

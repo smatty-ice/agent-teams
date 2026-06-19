@@ -67,6 +67,13 @@ _DDL = [
     """CREATE TABLE IF NOT EXISTS team_hook_subs (
         sub_id TEXT PRIMARY KEY, team_id TEXT NOT NULL, hook_kind TEXT NOT NULL,
         last_event_id INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)""",
+    # One authoritative state row per team (roster, inbox/push cursors, ...).
+    # Replaces the append-only ``[team:state]`` comment snapshots, which grew
+    # unboundedly and were read back by created_at (1s granularity) with a
+    # non-atomic read-modify-write -> lost updates + same-second ambiguity.
+    """CREATE TABLE IF NOT EXISTS team_state (
+        team_id TEXT PRIMARY KEY, state_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL)""",
     "CREATE INDEX IF NOT EXISTS idx_team_ops_hash ON team_operations(input_hash)",
     "CREATE INDEX IF NOT EXISTS idx_team_ops_team ON team_operations(team_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_team_msgs_box ON team_messages(team_id, to_member, id)",
@@ -80,6 +87,46 @@ def ensure_tables(conn) -> None:
     with kb.write_txn(conn):
         for stmt in _DDL:
             conn.execute(stmt)
+
+
+# ---------------------------------------------------------------------------
+# Team state (single authoritative row per team)
+# ---------------------------------------------------------------------------
+
+def state_read(conn: sqlite3.Connection, team_id: str) -> Optional[dict[str, Any]]:
+    """Return the team's state dict, or None if no row exists yet.
+
+    Plain SELECT — safe to call inside or outside an open transaction.
+    Returns None (not {}) so callers can distinguish "no row" (fall back to
+    legacy comment snapshots for back-compat) from "empty state".
+    """
+    row = conn.execute(
+        "SELECT state_json FROM team_state WHERE team_id = ?", (str(team_id),)
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        return json.loads(row["state_json"])
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def state_write(conn: sqlite3.Connection, team_id: str, state: dict[str, Any]) -> None:
+    """Upsert the single state row for ``team_id``.
+
+    MUST be called inside an open ``kb.write_txn`` (the caller owns the txn so a
+    read-modify-write can be atomic in one BEGIN IMMEDIATE — that serialization
+    is what removes the lost-update race the comment snapshots had).
+    """
+    payload = json.dumps(state, ensure_ascii=False, sort_keys=True)
+    now = int(time.time())
+    conn.execute(
+        "INSERT INTO team_state (team_id, state_json, updated_at) "
+        "VALUES (?, ?, ?) "
+        "ON CONFLICT(team_id) DO UPDATE SET "
+        "state_json = excluded.state_json, updated_at = excluded.updated_at",
+        (str(team_id), payload, now),
+    )
 
 
 # ---------------------------------------------------------------------------
