@@ -130,6 +130,43 @@ def state_write(conn: sqlite3.Connection, team_id: str, state: dict[str, Any]) -
 
 
 # ---------------------------------------------------------------------------
+# Retention (bound growth for always-on teams)
+# ---------------------------------------------------------------------------
+
+def prune_history(
+    conn: sqlite3.Connection, *, older_than_seconds: int = 30 * 86400,
+) -> dict[str, int]:
+    """Delete aged, terminal bookkeeping rows so the journal/mailbox tables do
+    not grow without bound on a long-lived team. Conservative by design:
+
+    - ``team_operations``: only ``status != 'pending'`` rows older than the
+      cutoff (a still-pending op is never pruned).
+    - ``team_messages``: only ``acked_at IS NOT NULL`` rows older than the
+      cutoff (unacked and dead-lettered messages are kept regardless of age).
+
+    ``team_state`` is one row per team and needs no pruning. Returns the delete
+    counts. Not auto-run — call from a maintenance cron or the lead so the
+    cadence/retention window is an explicit operational choice.
+    """
+    cutoff = int(time.time()) - int(older_than_seconds)
+    with kb.write_txn(conn):
+        ops = conn.execute(
+            "DELETE FROM team_operations "
+            "WHERE status != 'pending' AND updated_at < ?",
+            (cutoff,),
+        ).rowcount
+        msgs = conn.execute(
+            "DELETE FROM team_messages "
+            "WHERE acked_at IS NOT NULL AND acked_at < ?",
+            (cutoff,),
+        ).rowcount
+    return {
+        "operations_deleted": int(ops or 0),
+        "messages_deleted": int(msgs or 0),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Operation journal (Item 2)
 # ---------------------------------------------------------------------------
 

@@ -33,6 +33,12 @@ from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
 
+# team_shutdown's cooperative grace loop runs synchronously in the tool handler,
+# holding the gateway turn for its duration. Cap it so a large/typo'd value can't
+# wedge the turn for minutes. A true hard-stop should be brief; longer cooperative
+# waits belong to an out-of-band sweep, not the dispatching turn.
+_MAX_SHUTDOWN_GRACE_SECONDS = 120.0
+
 
 # ---------------------------------------------------------------------------
 # Gating
@@ -386,6 +392,13 @@ def _handle_team_shutdown(args: dict) -> str:
         timeout_seconds = float(args.get("timeout_seconds") or 0)
     except (TypeError, ValueError):
         timeout_seconds = 0.0
+    if timeout_seconds > _MAX_SHUTDOWN_GRACE_SECONDS:
+        logger.warning(
+            "team_shutdown timeout_seconds=%.0f clamped to %.0f (the grace "
+            "window blocks the gateway turn synchronously)",
+            timeout_seconds, _MAX_SHUTDOWN_GRACE_SECONDS,
+        )
+        timeout_seconds = _MAX_SHUTDOWN_GRACE_SECONDS
     if not team_id:
         return tool_error("team_id is required")
     if not member:

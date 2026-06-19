@@ -232,7 +232,15 @@ def replay(conn: sqlite3.Connection, operation_id: str) -> dict[str, Any]:
 
 def requeue(conn: sqlite3.Connection, message_id: int) -> dict[str, Any]:
     """Clear ``dead_letter`` and reset ``delivered_at`` on a message row so it
-    is redelivered on the recipient's next inbox read."""
+    is redelivered on the recipient's next inbox read.
+
+    Clearing the index flags is not sufficient on its own: ``unread_only`` inbox
+    reads filter by the recipient's high-water comment cursor, so a message at or
+    below the cursor stays hidden. We therefore also rewind the recipient's
+    cursor to just before this message's comment, restoring standard
+    high-water-mark recovery semantics (the message — and anything after it —
+    becomes unread again).
+    """
     with kb.write_txn(conn):
         cur = conn.execute(
             "UPDATE team_messages SET dead_letter = 0, delivered_at = NULL "
@@ -245,6 +253,21 @@ def requeue(conn: sqlite3.Connection, message_id: int) -> dict[str, Any]:
     row = conn.execute(
         "SELECT * FROM team_messages WHERE id = ?", (int(message_id),)
     ).fetchone()
+
+    # Rewind the recipient's inbox cursor so unread_only reads resurface this
+    # message (reconciles the team_messages index with the comment-cursor read
+    # model — the audit's requeue/unread_only mismatch).
+    team_id = row["team_id"]
+    to_member = row["to_member"]
+    comment_id = int(row["comment_id"])
+    state = kt._read_state(conn, team_id)
+    cursors = dict(state.get("cursors") or {})
+    board = state.get("board")
+    current = kt._read_cursor(cursors, board, to_member)
+    target = comment_id - 1
+    if current > target:
+        cursors[kt._cursor_key(board, to_member)] = target
+        kt._update_state(conn, team_id, cursors=cursors)
     return {k: row[k] for k in row.keys()}
 
 
