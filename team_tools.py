@@ -130,7 +130,14 @@ def _idempotent_remember(
             conn, op_id, status=status, result_json=result_json, error=error,
         )
     except Exception:
-        pass
+        # The mutation already happened; if the journal write fails the op is
+        # unrecorded and a retry could double-write. Surface it instead of
+        # swallowing silently so the idempotency hole is diagnosable.
+        logger.warning(
+            "team op-journal write failed (verb=%s team=%s); a retry may "
+            "double-write this operation",
+            verb, team_id, exc_info=True,
+        )
 # --- Phase 2 end ---
 
 

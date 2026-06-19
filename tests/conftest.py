@@ -21,7 +21,12 @@ import pytest
 
 import plugins  # real package: plugins/__init__.py exists
 
-_PLUGIN_DIR = Path(plugins.__file__).resolve().parent / "agent-teams"
+# The plugin dir is this file's grandparent (tests/ -> plugin dir). Resolving it
+# from __file__ (not from the `plugins` package) makes the suite run BOTH standalone
+# from ~/Projects/agent-teams AND in a <hermes>/plugins/agent-teams checkout. The
+# `import plugins` above still provides the parent namespace the test modules import
+# `plugins.agent_teams` through.
+_PLUGIN_DIR = Path(__file__).resolve().parent.parent
 _PKG_NAME = "plugins.agent_teams"
 
 

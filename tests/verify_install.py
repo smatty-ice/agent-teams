@@ -49,10 +49,12 @@ EXPECTED_TEAM_TOOLS = {
     "team_mark_blocked", "team_restore_assignment", "team_explain_blockage",
 }
 
-# The repo root (…/hermes-agent-plugin) and the source plugin dir.
+# The source plugin dir = this file's grandparent (tests/ -> plugin dir). Works
+# BOTH standalone (~/Projects/agent-teams) and in a <hermes>/plugins/agent-teams
+# checkout. hermes_cli is provided by the Hermes venv this is run with.
 _THIS = Path(__file__).resolve()
-REPO_ROOT = _THIS.parents[3]            # tests/ -> agent-teams/ -> plugins/ -> repo
-SRC_PLUGIN = REPO_ROOT / "plugins" / "agent-teams"
+SRC_PLUGIN = _THIS.parents[1]
+REPO_ROOT = SRC_PLUGIN
 
 
 class Failure(Exception):
@@ -165,11 +167,16 @@ def verify_self_containment() -> dict:
             trimmed,
             flags=re.DOTALL,
         )
-    _check(
-        trimmed != original_schema,
-        "could not strip team_* DDL from kb.SCHEMA_SQL — the verification's "
-        "vanilla-core simulation would be a no-op (and prove nothing)",
-    )
+    # On modern Hermes core, SCHEMA_SQL no longer ships the team_* tables at all
+    # (the plugin owns them), so there may be nothing to strip — and that IS the
+    # vanilla-core state we want to reproduce, not a failure. Either way, the real
+    # proof is the post-init assertion below (a fresh connect sees none of the
+    # three tables) plus the lifecycle smoke (only the plugin can recreate them).
+    if trimmed == original_schema:
+        print(
+            "  note: core SCHEMA_SQL already lacks team_* DDL (modern core) — "
+            "vanilla state is intrinsic, not simulated"
+        )
     kb.SCHEMA_SQL = trimmed
     try:
         # Re-init from scratch so the trimmed (vanilla-shaped) schema applies.
