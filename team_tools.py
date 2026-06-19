@@ -57,6 +57,13 @@ def _profile_has_team_toolset() -> bool:
         toolsets = cfg.get("toolsets", [])
         return "team" in toolsets
     except Exception:
+        # Don't let a config-load error silently hide the whole toolset — that
+        # presents as "my team_* tools vanished" with no clue why. Surface it;
+        # HERMES_TEAM_LEAD=1 remains the env override.
+        logger.warning(
+            "team toolset gate: profile config load failed; team_* tools "
+            "hidden (set HERMES_TEAM_LEAD=1 to force-enable)", exc_info=True,
+        )
         return False
 
 
