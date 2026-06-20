@@ -26,7 +26,7 @@ def _warn_on_existing_team_tool(name: str) -> None:
     """AT-02: make a same-toolset registration collision visible.
 
     The core ``tools/team_tools.py`` (the built-in copy dispatcher-spawned
-    workers load) registers the same 17 names under the same ``"team"`` toolset
+    workers load) registers the same 18 names under the same ``"team"`` toolset
     at import. ``tools.registry.register`` only rejects a *cross-toolset* shadow;
     a same-toolset re-registration is a **silent last-write-wins overwrite**
     (no error, no log). So before we register, check the registry and log a
@@ -56,7 +56,7 @@ def _warn_on_existing_team_tool(name: str) -> None:
 
 
 def register(ctx) -> None:
-    """Plugin entrypoint. Registers the 17 team_* tools, the gateway watcher
+    """Plugin entrypoint. Registers the 18 team_* tools, the gateway watcher
     hook, and the ``team-watch`` CLI daemon command."""
     for name, schema in tt.SCHEMAS.items():
         _warn_on_existing_team_tool(name)

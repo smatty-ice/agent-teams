@@ -1,6 +1,6 @@
 """Gating + registration tests for the plugin's team_tools.
 
-Verifies the 17 team_* tools are hidden by default and become visible when the
+Verifies the 18 team_* tools are hidden by default and become visible when the
 lead-gate (``HERMES_TEAM_LEAD`` env var or ``team`` profile toolset) is on.
 
 In the plugin world tools are registered via ``register(ctx)`` →
@@ -22,11 +22,13 @@ PHASE1_TEAM_TOOLS = {
     "team_status", "team_shutdown", "team_delete",
 }
 
-# Phase 2 additions: Item 3 (debug/export) + Item 4 (recovery verbs).
+# Phase 2 additions: Item 3 (debug/export) + Item 4 (recovery verbs), plus the
+# team_list discovery tool.
 PHASE2_TEAM_TOOLS = {
     "team_debug_bundle", "team_export_config",
     "team_inspect", "team_replay", "team_requeue",
     "team_mark_blocked", "team_restore_assignment", "team_explain_blockage",
+    "team_list",
 }
 
 EXPECTED_TEAM_TOOLS = PHASE1_TEAM_TOOLS | PHASE2_TEAM_TOOLS
@@ -80,7 +82,7 @@ def test_team_tools_hidden_without_env_or_profile(monkeypatch, tmp_path):
 
 
 def test_team_tools_visible_with_env_var(monkeypatch, tmp_path):
-    """With HERMES_TEAM_LEAD=1, all 17 team_* tools must be available."""
+    """With HERMES_TEAM_LEAD=1, all 18 team_* tools must be available."""
     monkeypatch.setenv("HERMES_TEAM_LEAD", "1")
     team_names = _team_names_in_team_toolset(monkeypatch, tmp_path)
     assert team_names == EXPECTED_TEAM_TOOLS, (
@@ -90,7 +92,7 @@ def test_team_tools_visible_with_env_var(monkeypatch, tmp_path):
 
 def test_register_provides_team_toolset(monkeypatch, tmp_path):
     """The plugin's ``register(ctx)`` is the discovery path (not a module-level
-    loop). After register, the ``team`` toolset contains exactly the 17 tools.
+    loop). After register, the ``team`` toolset contains exactly the 18 tools.
 
     Mirrors the original ``test_team_tools_are_auto_discovered`` regression
     guard, retargeted to the plugin entrypoint: a regression where the tools
@@ -130,7 +132,7 @@ def test_register_provides_team_toolset(monkeypatch, tmp_path):
     schemas = get_tool_definitions(enabled_toolsets=["team"], quiet_mode=True)
     names = {s["function"]["name"] for s in schemas if "function" in s}
     assert EXPECTED_TEAM_TOOLS.issubset(names)
-    # All 17 SCHEMAS names registered.
+    # All 18 SCHEMAS names registered.
     assert set(tt.SCHEMAS) == EXPECTED_TEAM_TOOLS
 
 
@@ -197,3 +199,23 @@ def test_team_shutdown_with_timeout_triggers_hard_shutdown(monkeypatch, tmp_path
         assert kt.get_team(conn, team_id).members["worker"].status == "stopped"
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# team_list — standing-team discovery (find a team_id without team_create)
+# ---------------------------------------------------------------------------
+
+def test_team_list_returns_created_team(conn):
+    """`team_list` wraps `kt.list_teams` and surfaces a created team's
+    team_id + name so a lead can discover a standing team without re-creating
+    it."""
+    import json
+    from plugins.agent_teams import kanban_team as kt
+    from plugins.agent_teams import team_tools as tt
+
+    created = kt.team_create(conn, name="discoverable", goal="be found")
+
+    payload = json.loads(tt._handle_team_list({}))
+    teams = payload["teams"]
+    assert created.id in {t["id"] for t in teams}
+    assert "discoverable" in {t["name"] for t in teams}

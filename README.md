@@ -6,7 +6,7 @@ named roster, a shared Kanban task board, a comments-as-mailbox, plan-approval
 gating, recovery verbs, and an auto-idle + push watcher — without adding anything
 to Hermes core.
 
-The plugin registers **17 gated `team_*` tools** via `register(ctx)`, owns its **3
+The plugin registers **18 gated `team_*` tools** via `register(ctx)`, owns its **3
 SQLite tables** (created idempotently on connect — no core schema dependency), and
 re-homes the watcher onto plugin-safe surfaces (a throttled `pre_gateway_dispatch`
 hook plus an optional `hermes team-watch` daemon).
@@ -39,13 +39,13 @@ cp -r plugins/agent-teams ~/.hermes/plugins/agent-teams
    - add `team` to the active profile's `toolsets:` list.
 
 3. Start a fresh session and confirm the toolset loaded — `/toolsets` should show
-   `team [17]`.
+   `team [18]`.
 
 ## Verify
 
 A runnable real-loader proof ships with the plugin. It installs the plugin into a
 throwaway `HERMES_HOME`, loads it through the genuine Hermes plugin loader, asserts
-exactly 17 `team_*` tools register, then drops the three tables and runs the full
+exactly 18 `team_*` tools register, then drops the three tables and runs the full
 team lifecycle through the plugin handlers — proving the plugin recreates its own
 schema and never relies on a core helper:
 
@@ -79,7 +79,7 @@ The auto-idle + push passes run two ways:
   advancing roster auto-idle transitions and pushing addressed messages to
   recipients.
 
-The 17 tools and the 3 tables work fully without either watcher surface (manual
+The 18 tools and the 3 tables work fully without either watcher surface (manual
 `team_member_update` + `team_inbox` polling is the baseline model), so the feature
 is complete even if you never run the daemon.
 

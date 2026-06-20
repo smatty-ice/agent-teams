@@ -1,12 +1,12 @@
 # agent-teams team-module integrity manifest (AT-01).
 # Regenerate after an intentional change:  python -m plugins.agent_teams.drift_check --write
 # Verify:  python -m plugins.agent_teams.drift_check --check
-8a9d254397b77d2fea272fe1ca6bdb6194237a33018d3a1b2b679b5e77715b36  __init__.py
+f192fbf2cb17501e451452bdf11449f78d5a6fc9cb80f606eebe92be38fffa04  __init__.py
 0ad0ea3dfb71c58900e85c40781d0397bbd685f353f22e1cd871b855d7cc3e24  kanban_team.py
 e70a20edc066edfaa0b431251248e4415cf0b24f16d2b0cef701b7c0126b66d8  kanban_team_store.py
 a71ec69412f348288a95baf2ef93a43df9992520d3dc950261f76362038138cf  kanban_team_runtime.py
 f9bca7cfadb82e146a4eb0f8ea8844d3f41b31e74f05f247ac64b0cf1178ecee  kanban_team_recovery.py
 c8415fbf8c90baab4b488940c65008f05ee0df4d63f5bbd2ce40621df0567098  kanban_team_hooks.py
-a06b7e2155d686707d8e0bb41e3bcefa359e0c56d555667a2c52b6c8feaf350e  team_tools.py
+f2ec65fb0170f01db28557dcd3f48e7330e5df2e97d7fb4dbdf7acd1480b6e06  team_tools.py
 acd1d7d38034c6c1cb586101c70a312dfa6f45ea426caf61ff47411c88c9c10d  watcher.py
 cc5d86a2761c86737884bad1eea89f2d74ea83931fe45fc3e41bdd020f330564  drift_check.py

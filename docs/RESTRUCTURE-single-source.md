@@ -11,13 +11,13 @@ The agent-teams team layer exists as **three diverging copies** on the productio
 | Copy | Path | Role |
 |---|---|---|
 | Repo (this repo, git HEAD) | `~/Projects/agent-teams` → `github.com/smatty-ice/agent-teams` | version-controlled source; what the test suite (105 cases) validates |
-| User-plugin install | `~/.hermes/plugins/agent-teams` | config-enabled plugin (`plugins.enabled: [agent-teams]`); registers all 17 tools via `register(ctx)` |
+| User-plugin install | `~/.hermes/plugins/agent-teams` | config-enabled plugin (`plugins.enabled: [agent-teams]`); registers all 18 tools via `register(ctx)` |
 | **Built-in core copy** | `~/.hermes/hermes-agent/hermes_cli/kanban_team*.py` + `tools/team_tools.py` | **the copy dispatcher-spawned workers actually load**; `gateway/team_notifier.py` imports it for the auto-idle/push watcher |
 
 Two compounding hazards:
 
 - **AT-01 — drift.** The built-in core copy is hand-synced from the repo and, per its own in-source comment, is *"git-reset on Hermes auto-update — re-apply after updating."* So the deployed behavior depends on a human re-applying edits after every update, and a hand-edit to core (e.g. the `HERMES_KANBAN_TASK` teams-viewer stamp) is invisible to git and lost on the next update. The audited+tested artifact ≠ the deployed artifact.
-- **AT-02 — silent registration collision.** Both `tools/team_tools.py` (built-in, self-registers at import) and the plugin's `register(ctx)` register the same 17 names under the **same** `"team"` toolset. `tools/registry.py:register()` only rejects a *cross-toolset* shadow; a same-toolset re-registration is a silent last-write-wins overwrite — no error, no log. Which copy backs a tool call is import-order-dependent, and nothing records the swap.
+- **AT-02 — silent registration collision.** Both `tools/team_tools.py` (built-in, self-registers at import) and the plugin's `register(ctx)` register the same 18 names under the **same** `"team"` toolset. `tools/registry.py:register()` only rejects a *cross-toolset* shadow; a same-toolset re-registration is a silent last-write-wins overwrite — no error, no log. Which copy backs a tool call is import-order-dependent, and nothing records the swap.
 
 ## 2. Goal
 
