@@ -15,7 +15,7 @@ in-tree pytest suite — which loads the package via a conftest shim — cannot:
                  calls register(ctx) -> ctx.register_tool -> registry.register
 
      Then we resolve the ``team`` toolset via the same surface the live agent
-     uses (model_tools.get_tool_definitions) and assert exactly 17 ``team_*``
+     uses (model_tools.get_tool_definitions) and assert exactly 18 ``team_*``
      tools registered THROUGH the real loader (with HERMES_TEAM_LEAD=1).
 
   2. SELF-CONTAINMENT. The user's real Hermes runs vanilla ``origin/main``,
@@ -39,11 +39,11 @@ import tempfile
 import traceback
 from pathlib import Path
 
-# The 17 tools the plugin must provide.
+# The 18 tools the plugin must provide.
 EXPECTED_TEAM_TOOLS = {
     "team_create", "team_spawn", "team_task_create",
     "team_send", "team_inbox", "team_inbox_ack",
-    "team_status", "team_shutdown", "team_delete",
+    "team_status", "team_list", "team_shutdown", "team_delete",
     "team_debug_bundle", "team_export_config",
     "team_inspect", "team_replay", "team_requeue",
     "team_mark_blocked", "team_restore_assignment", "team_explain_blockage",
@@ -86,7 +86,7 @@ def _setup_hermes_home(tmp: Path) -> Path:
 
 def verify_real_loader() -> list[str]:
     """Load the plugin through the REAL PluginManager and return the team_*
-    tool names resolved via get_tool_definitions. Asserts exactly 17."""
+    tool names resolved via get_tool_definitions. Asserts exactly 18."""
     # The real loader entrypoint. discover_plugins(force=True) scans
     # $HERMES_HOME/plugins, honors plugins.enabled, and runs register(ctx).
     from hermes_cli import plugins as P
@@ -118,7 +118,7 @@ def verify_real_loader() -> list[str]:
     )
     _check(
         set(names) == EXPECTED_TEAM_TOOLS,
-        f"expected the 17 team tools, got {len(names)}: {names}\n"
+        f"expected the 18 team tools, got {len(names)}: {names}\n"
         f"  missing: {sorted(EXPECTED_TEAM_TOOLS - set(names))}\n"
         f"  extra:   {sorted(set(names) - EXPECTED_TEAM_TOOLS)}",
     )
@@ -347,16 +347,16 @@ def main() -> int:
         print(f"enabled in       -> {home / 'config.yaml'}")
         print()
 
-        # --- Check 1: real loader registers exactly 17 tools ---
+        # --- Check 1: real loader registers exactly 18 tools ---
         try:
             names = verify_real_loader()
             print(f"[1] REAL LOADER: discover_plugins(force=True) loaded the "
                   f"plugin and registered {len(names)} team_* tools:")
             for n in sorted(names):
                 print(f"      - {n}")
-            results.append(("real-loader 17-tool registration", True, ""))
+            results.append(("real-loader 18-tool registration", True, ""))
         except Failure as e:
-            results.append(("real-loader 17-tool registration", False, str(e)))
+            results.append(("real-loader 18-tool registration", False, str(e)))
 
         print()
 

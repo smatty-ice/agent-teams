@@ -67,7 +67,7 @@ class FakeCtx:
         )
 
 
-def test_register_registers_17_team_tools(monkeypatch):
+def test_register_registers_18_team_tools(monkeypatch):
     monkeypatch.setenv("HERMES_TEAM_LEAD", "1")
     from plugins.agent_teams import register
 
@@ -75,7 +75,7 @@ def test_register_registers_17_team_tools(monkeypatch):
     register(ctx)
 
     team_tools = [t for t in ctx.tools if t["name"].startswith("team_")]
-    assert len(team_tools) == 17, [t["name"] for t in ctx.tools]
+    assert len(team_tools) == 18, [t["name"] for t in ctx.tools]
     # Every team tool registers under the "team" toolset with an emoji + gate.
     for t in team_tools:
         assert t["toolset"] == "team"

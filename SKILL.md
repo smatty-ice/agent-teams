@@ -1,6 +1,6 @@
 ---
 name: agent-teams
-description: Use when coordinating Claude-style multi-agent teams in Hermes with a lead, named teammates, shared Kanban task board, comments-as-mailbox, plan approval, quality gates, and cleanup. Backed by the installable agent-teams plugin (17 gated team_* tools).
+description: Use when coordinating Claude-style multi-agent teams in Hermes with a lead, named teammates, shared Kanban task board, comments-as-mailbox, plan approval, quality gates, and cleanup. Backed by the installable agent-teams plugin (18 gated team_* tools).
 version: 3.0.0
 author: Hermes Agent
 license: MIT
@@ -429,7 +429,7 @@ Before final response, verify:
 
 ## Native Team Tools (shipped as the `agent-teams` plugin)
 
-The patterns above are still the operator playbook, but the `agent-teams` **plugin** also exposes a Claude-parity tool surface. The plugin registers **17** gated `team_*` tools (9 Phase-1 + 8 Phase-2) via its `register(ctx)` entrypoint (`plugins/agent-teams/__init__.py` → `ctx.register_tool(...)`); the domain logic lives in `plugins/agent-teams/kanban_team.py` and the tool schemas/handlers/gating in `plugins/agent-teams/team_tools.py`. Nothing is added to Hermes core — the plugin depends only on stable vanilla-Hermes `hermes_cli.kanban_db` APIs and creates its own tables idempotently (see Storage model).
+The patterns above are still the operator playbook, but the `agent-teams` **plugin** also exposes a Claude-parity tool surface. The plugin registers **18** gated `team_*` tools (9 Phase-1 + 9 Phase-2) via its `register(ctx)` entrypoint (`plugins/agent-teams/__init__.py` → `ctx.register_tool(...)`); the domain logic lives in `plugins/agent-teams/kanban_team.py` and the tool schemas/handlers/gating in `plugins/agent-teams/team_tools.py`. Nothing is added to Hermes core — the plugin depends only on stable vanilla-Hermes `hermes_cli.kanban_db` APIs and creates its own tables idempotently (see Storage model).
 
 ### Install and enable
 
@@ -451,7 +451,7 @@ Then gate the tools on (either is sufficient — see Enabling below):
 - `export HERMES_TEAM_LEAD=1`, OR
 - add `team` to the profile's `toolsets:` list.
 
-Start a fresh session and confirm `/toolsets` shows `team [17]`. The plugin lives in `~/.hermes/plugins/`, which is **outside** the `~/.hermes/hermes-agent/` checkout that Hermes `git reset --hard`s on update, so it survives Hermes auto-updates. See `plugins/agent-teams/README.md` for verification and the optional `hermes team-watch` daemon.
+Start a fresh session and confirm `/toolsets` shows `team [18]`. The plugin lives in `~/.hermes/plugins/`, which is **outside** the `~/.hermes/hermes-agent/` checkout that Hermes `git reset --hard`s on update, so it survives Hermes auto-updates. See `plugins/agent-teams/README.md` for verification and the optional `hermes team-watch` daemon.
 
 ### Phase 1 tools (9)
 
@@ -554,7 +554,7 @@ The auto-idle + push passes are re-homed onto plugin-safe surfaces (`plugins/age
 - **Throttled hook** — `register(ctx)` wires `run_passes_throttled` onto the `pre_gateway_dispatch` hook. It fires on gateway traffic, at most once per `WATCH_INTERVAL` (5s), and is **observer-only**: it always returns `None` (never influences dispatch) and swallows exceptions so a misbehaving pass can never disrupt the gateway. This covers active team-lead use, but **will NOT fire on a fully idle gateway** (no traffic → no hook).
 - **Optional daemon** — `hermes team-watch` runs `watch_daemon`, a blocking loop that ticks every 5s regardless of gateway traffic, giving true timer-based idle delivery. It is registered via `ctx.register_cli_command("team-watch", ...)`. Run it in its own terminal/`tmux` pane when you need guaranteed idle-time delivery.
 
-The 17 tools + tables work fully without the watcher (manual `team_member_update` + `team_inbox` polling = the Phase-1 model), so the feature is complete even if neither watcher surface is active.
+The 18 tools + tables work fully without the watcher (manual `team_member_update` + `team_inbox` polling = the Phase-1 model), so the feature is complete even if neither watcher surface is active.
 
 ### Known non-parity with Claude Code teams
 
@@ -573,7 +573,7 @@ The 17 tools + tables work fully without the watcher (manual `team_member_update
 
 All paths are inside the plugin (`plugins/agent-teams/`):
 
-- `__init__.py` — plugin entrypoint: `register(ctx)` registers the 17 tools, the `pre_gateway_dispatch` watcher hook, and the `team-watch` CLI command.
+- `__init__.py` — plugin entrypoint: `register(ctx)` registers the 18 tools, the `pre_gateway_dispatch` watcher hook, and the `team-watch` CLI command.
 - `kanban_team.py` — domain logic (dataclasses, state helpers, team_* functions, plan-approval gate, branch hook, `agent_type` resolver).
 - `team_tools.py` — tool `SCHEMAS`/`HANDLERS`/`EMOJIS`, the `_profile_has_team_toolset` gate, journal-backed idempotency.
 - `kanban_team_store.py` — `ensure_tables` (idempotent DDL for the 3 tables) + `team_operations` journal / `team_messages` index helpers.
@@ -591,4 +591,4 @@ All paths are inside the plugin (`plugins/agent-teams/`):
 - **Phase 1 (shipped)**: the nine native `team_*` tools, comment-as-mailbox, per-hash idempotency cache.
 - **Phase 2 (shipped)**: `team_operations` journal + durable cross-tool dedup; `team_messages` table (`delivered_at`/`acked_at`/`dead_letter`); `team_debug_bundle` + `team_export_config`; the curated 6 recovery verbs; tool-layer plan-approval enforcement on `team_task_create`; application-level `branch_name` collision hook; `TaskCreated`/`TaskCompleted`/`TeammateIdle` hook registry + pump; board-qualified inbox cursors; `team_spawn agent_type` skill reuse (thin slice).
 - **Phase 3 (shipped)**: `worker_pid` SIGTERM-on-timeout in `team_shutdown` (`timeout_seconds`, reuses `reclaim_task`/`_terminate_reclaimed_worker` then `archive_task`); auto-idle on terminal run events (`run_auto_idle_pass`); true push-based delivery via the watcher re-readying recipient tasks.
-- **Plugin repackage (shipped)**: the whole feature ships as the installable `agent-teams` plugin (`plugins/agent-teams/`) — all 17 tools register via `register(ctx)`, the 3 tables are plugin-owned (`ensure_tables`, no core schema dependency), and the watcher is re-homed onto the `pre_gateway_dispatch` hook + optional `hermes team-watch` daemon. It depends only on stable vanilla-Hermes core APIs and lives in `~/.hermes/plugins/`, surviving Hermes auto-updates.
+- **Plugin repackage (shipped)**: the whole feature ships as the installable `agent-teams` plugin (`plugins/agent-teams/`) — all 18 tools register via `register(ctx)`, the 3 tables are plugin-owned (`ensure_tables`, no core schema dependency), and the watcher is re-homed onto the `pre_gateway_dispatch` hook + optional `hermes team-watch` daemon. It depends only on stable vanilla-Hermes core APIs and lives in `~/.hermes/plugins/`, surviving Hermes auto-updates.

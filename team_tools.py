@@ -383,6 +383,18 @@ def _handle_team_status(args: dict) -> str:
         return tool_error(f"team_status failed: {exc}")
 
 
+def _handle_team_list(args: dict) -> str:
+    try:
+        conn = _conn()
+        try:
+            teams = kt.list_teams(conn)
+            return _ok({"teams": [t.as_dict() for t in teams]})
+        finally:
+            conn.close()
+    except Exception as exc:
+        return tool_error(f"team_list failed: {exc}")
+
+
 def _handle_team_shutdown(args: dict) -> str:
     team_id = (args.get("team_id") or "").strip()
     member = (args.get("member") or "").strip()
@@ -750,6 +762,19 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "required": ["team_id"],
         },
     },
+    "team_list": {
+        "name": "team_list",
+        "description": (
+            "List all live teams with their team_id, name, goal, and roster. "
+            "Use this to find a standing team's team_id without calling "
+            "team_create."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
     "team_shutdown": {
         "name": "team_shutdown",
         "description": (
@@ -934,6 +959,7 @@ HANDLERS = {
     "team_inbox":       _handle_team_inbox,
     "team_inbox_ack":   _handle_team_inbox_ack,
     "team_status":      _handle_team_status,
+    "team_list":        _handle_team_list,
     "team_shutdown":    _handle_team_shutdown,
     "team_delete":      _handle_team_delete,
     # --- Phase 2 begin ---
@@ -956,6 +982,7 @@ EMOJIS = {
     "team_inbox":       "📬",
     "team_inbox_ack":   "✅",
     "team_status":      "📊",
+    "team_list":        "🗂",
     "team_shutdown":    "🛑",
     "team_delete":      "🗑",
     # --- Phase 2 begin ---
